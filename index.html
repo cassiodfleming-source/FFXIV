@@ -1113,8 +1113,15 @@ function autoPlaceKroxyRinnon() {
     const outerCloneBaiters = outerClonePriority.filter(id => outs.includes(id)).slice(0, 2);
 
     outerCloneBaiters.forEach((id, i) => {
-      // Far opposite side of boss, away from towers. These should be the two guaranteed outer clone baits.
-      movePlayerTo(id, posRelative(C, geo.radial, geo.tangent, -195, (i - 0.5) * 44), controlled, true);
+      // Outer clone baiters sit touching the boss ring, split by their tower side.
+      // D1/D2 bait on the DPS/left-tower side of the boss.
+      // T1/T2 bait on the opposite support/right-tower side of the boss.
+      // Small radial offsets separate two baiters on the same side without changing which side they are on.
+      const side = (id === 'D1' || id === 'D2') ? -1 : 1;
+      const sameSide = outerCloneBaiters.filter(x => ((x === 'D1' || x === 'D2') ? -1 : 1) === side);
+      const idxOnSide = sameSide.indexOf(id);
+      const radialOffset = (idxOnSide - (sameSide.length - 1) / 2) * 24;
+      movePlayerTo(id, posRelative(C, geo.radial, geo.tangent, radialOffset, side * (BOSS_R + PLAYER_R + 4)), controlled, true);
     });
 
     // Cone baiters for the cone AoEs. Use outside H1/H2 first, then D3/D4.
