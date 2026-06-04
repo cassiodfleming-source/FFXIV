@@ -120,14 +120,23 @@
       <div>Cast: <b id="castLabel">Towers</b></div>
       <div>Previous End: <b id="prevEndLabel">None</b></div>
       <div>Tower resolve in:</div>
-      <div class="big" id="timerLabel">2.0s</div>
+      <div class="big" id="timerLabel">3.0s</div>
     </div>
     <div class="card">
-      <h3>Mechanic tuning</h3>
+      <h3>Strategy assist</h3>
       <div class="small">
-        Invisible player hitbox radius: <b><span id="hitboxValue">10</span> px</b><br>
-        <input id="hitboxSlider" type="range" min="6" max="18" step="1" value="10" style="width:100%; margin-top:8px;">
-        <br>This hidden circle is used for tower soaking, stack checks, circle hits, clone hits, and cone hits. It counts only when fully covered.
+        Strat:<br>
+        <select id="stratSelect" style="width:100%;background:#111a2b;color:#e8eef8;border:1px solid #304562;border-radius:6px;padding:6px;margin:6px 0 10px 0;font-weight:700">
+          <option value="manual">Manual only</option>
+          <option value="kroxy">Kroxy-Rinnon(341)</option>
+        </select>
+        Player you control:<br>
+        <select id="controlledPlayerSelect" style="width:100%;background:#111a2b;color:#e8eef8;border:1px solid #304562;border-radius:6px;padding:6px;margin-top:6px;font-weight:700">
+          <option value="T1">T1</option><option value="T2">T2</option><option value="H1">H1</option><option value="H2">H2</option>
+          <option value="D1">D1</option><option value="D2">D2</option><option value="D3">D3</option><option value="D4">D4</option>
+        </select>
+        <br><br>When the strat is selected, pull positions update immediately and pressing <b>Start</b> automatically moves the other 7 players.
+        Hidden player hitbox is fixed at <b>6 px</b>.
       </div>
     </div>
     <div class="card">
@@ -147,7 +156,7 @@
       <div class="small">
         <span class="kbd">Click</span> select player<br>
         <span class="kbd">Right click</span> move selected<br>
-        <span class="kbd">Space</span> start / next set<br>
+        <span class="kbd">Space</span> start / repeat set<br>
         <span class="kbd">R</span> reset<br>
       </div>
     </div>
@@ -190,7 +199,7 @@ const ARENA_R = 410;
 const BOSS_R = 95;
 const PLAYER_R = 18;
 const TOWER_R = 55;
-let PLAYER_HIT_R = 10; // Invisible mechanical hitbox radius, adjustable in the left panel.
+const PLAYER_HIT_R = 6; // Fixed invisible mechanical hitbox radius for all checks.
 function towerSoakMargin() { return PLAYER_HIT_R; }
 const CIRCLE_R = TOWER_R;
 const STACK_R = TOWER_R;
@@ -198,11 +207,11 @@ const CLONE_R = 48;
 const CONE_LEN = 390;
 const CONE_HALF_ANGLE = Math.PI / 3.6;
 
-const PAIR_TIME = 2.0;
-const BOSS_CAST_TIME = 2.0;
+const PAIR_TIME = 3.0;
+const BOSS_CAST_TIME = 3.0;
 const POST_RESOLVE_TIME = 0.0;
 const TOWER_RADIUS_FROM_CENTER = 325;
-const TOWER_ANGLE_SEPARATION = Math.PI * 5 / 32; // 33.75° between tower centers
+const TOWER_ANGLE_SEPARATION = Math.PI * 3 / 16; // 33.75° between tower centers
 
 const playersTemplate = [
   { id: 'T1', role: 'support', job: 'Tank 1', color: '#1d8cff' },
@@ -293,33 +302,67 @@ function applyTimelineSigns(setNumber) {
   restoreSigns(signs);
 }
 
-function assignNextSetSignsToTowerSoakers(nextSetNumber) {
-  // Only players currently soaking towers receive the new markers for the next set.
-  // Everyone outside towers keeps their marker. Pattern is timeline-based:
-  // Target sets 3, 5, and 7 = 2 stacks + 1 cone + 1 circle
-  // Other target sets = 2 cones + 2 circles
-  const towerPlayers = [];
-  for (const tower of game.towers) {
-    for (const p of getTowerSoakers(tower)) {
-      if (!towerPlayers.includes(p)) towerPlayers.push(p);
-    }
-  }
+function assignNextSetSignsToTowerSoakers(nextSetNumber, fromSetNumber = game.pair) {
+  // Timeline marker update:
+  // After a set resolves, ONLY that set's tower soakers receive new markers.
+  // In Kroxy mode this must follow the planned soak timeline, not current positions,
+  // because Jump to set is used as an explanation tool.
+  const towerPlayerIds = (selectedStrat && selectedStrat() === 'kroxy')
+    ? soakerIdsForSet(fromSetNumber)
+    : (() => {
+        const ids = [];
+        for (const tower of game.towers) {
+          for (const p of getTowerSoakers(tower)) {
+            if (!ids.includes(p.id)) ids.push(p.id);
+          }
+        }
+        return ids;
+      })();
+
+  const towerPlayers = towerPlayerIds.map(getPlayer).filter(Boolean);
   if (towerPlayers.length === 0) {
-    log(`No tower players detected for set ${game.pair}; markers were unchanged.`);
+    log(`No planned tower players detected for set ${fromSetNumber}; markers were unchanged.`);
     return;
   }
   if (towerPlayers.length !== 4) {
-    log(`Warning: ${towerPlayers.length} tower players detected while advancing markers; assigning only detected players.`);
+    log(`Warning: ${towerPlayers.length} tower players detected for set ${fromSetNumber}; assigning only detected players.`);
   }
 
   const shuffled = shuffle(towerPlayers.slice());
-  const pattern = ([3, 5, 7].includes(nextSetNumber))
-    ? ['stack', 'stack', 'cone', 'circle']
-    : ['cone', 'cone', 'circle', 'circle'];
-  for (let i = 0; i < shuffled.length; i++) {
-    shuffled[i].sign = pattern[i % pattern.length];
+
+  // Marker pattern is based on the SET YOU ARE ENTERING:
+  // Entering 3/5/7: 2 stacks + 1 cone + 1 circle.
+  // IMPORTANT: the 2 stacks must always be exactly 1 support + 1 DPS.
+  // Entering 2/4/6/8: 2 cones + 2 circles.
+  if ([3, 5, 7].includes(nextSetNumber)) {
+    const supports = shuffle(towerPlayers.filter(p => p.role === 'support'));
+    const dps = shuffle(towerPlayers.filter(p => p.role === 'dps'));
+    const stackSupport = supports[0];
+    const stackDps = dps[0];
+    const stackIds = new Set([stackSupport?.id, stackDps?.id].filter(Boolean));
+
+    // Fallback only if something unexpected happens and the 4 tower players
+    // do not include both roles. In normal Kroxy-Rinnon sets this should not be used.
+    if (stackIds.size < 2) {
+      const fallbackStacks = shuffled.slice(0, 2);
+      stackIds.clear();
+      fallbackStacks.forEach(p => stackIds.add(p.id));
+    }
+
+    const remaining = shuffle(towerPlayers.filter(p => !stackIds.has(p.id)));
+    for (const p of towerPlayers) {
+      if (stackIds.has(p.id)) p.sign = 'stack';
+    }
+    if (remaining[0]) remaining[0].sign = 'cone';
+    if (remaining[1]) remaining[1].sign = 'circle';
+  } else {
+    const pattern = ['cone', 'cone', 'circle', 'circle'];
+    for (let i = 0; i < shuffled.length; i++) {
+      shuffled[i].sign = pattern[i % pattern.length];
+    }
   }
-  log(`Set ${nextSetNumber} markers assigned only to previous tower players: ${shuffled.map(p => p.id + '=' + p.sign).join(', ')}.`);
+
+  log(`Set ${nextSetNumber} markers assigned to set ${fromSetNumber} tower players only: ${towerPlayers.map(p => p.id + '=' + p.sign).join(', ')}.`);
 }
 
 function makeBossTimeline() {
@@ -329,23 +372,22 @@ function makeBossTimeline() {
 }
 
 function resetGame() {
-  // Pull positions: paired by quadrant, away from the towers.
-  // Canvas angles: 0° right, 90° down, -90° up.
-  // T pair = top-left, H pair = bottom-left, D1/D2 = top-right, D3/D4 = bottom-right.
-  const startPositions = {
-    // Closer to boss/center, kept in clear quadrant pairs.
-    H1: pointFromAngle(215, -140 * Math.PI / 180),
-    T1: pointFromAngle(215, -122 * Math.PI / 180),
-    H2: pointFromAngle(215, 140 * Math.PI / 180),
-    T2: pointFromAngle(215, 122 * Math.PI / 180),
+  // Pull positions. If Kroxy-Rinnon(341) is selected, use the strat pair quadrants:
+  // NW H1>T1, NE D1>D3, SW H2>T2, SE D2>D4.
+  const startPositions = selectedStrat && selectedStrat() === 'kroxy' ? kroxyPullPositions() : {
+    // Manual/default positions: old role quadrants.
+    T1: pointFromAngle(215, -140 * Math.PI / 180),
+    T2: pointFromAngle(215, -122 * Math.PI / 180),
+    H1: pointFromAngle(215, 140 * Math.PI / 180),
+    H2: pointFromAngle(215, 122 * Math.PI / 180),
     D1: pointFromAngle(215, -58 * Math.PI / 180),
-    D3: pointFromAngle(215, -40 * Math.PI / 180),
-    D2: pointFromAngle(215, 58 * Math.PI / 180),
+    D2: pointFromAngle(215, -40 * Math.PI / 180),
+    D3: pointFromAngle(215, 58 * Math.PI / 180),
     D4: pointFromAngle(215, 40 * Math.PI / 180),
   };
   const players = playersTemplate.map((p) => {
     const pos = startPositions[p.id];
-    return { ...p, x: pos.x, y: pos.y, soaks: 0, sign: 'circle', vulnUntil: 0, selected: false, dead: false };
+    return { ...p, x: pos.x, y: pos.y, targetX: pos.x, targetY: pos.y, moveStartX: pos.x, moveStartY: pos.y, moveT: 1, moveDur: 0, soaks: 0, sign: 'circle', vulnUntil: 0, selected: false, dead: false };
   });
   createInitialSigns(players);
   for (const p of players) p.firstSign = p.sign;
@@ -377,6 +419,8 @@ function resetGame() {
   game.bossTimeline = makeBossTimeline();
   applyTimelineSigns(1);
   spawnTowerPair();
+  const cps = document.getElementById('controlledPlayerSelect');
+  if (cps) game.selectedId = cps.value;
   document.getElementById('logBox').innerHTML = '';
   log('Forsaken FFXIV. Press Start to resolve the current tower set.');
   updateUI();
@@ -407,8 +451,9 @@ function spawnTowerPair() {
     if (game.cloneSnapshots[game.pair]) game.clones = game.cloneSnapshots[game.pair].clones.map(c => ({...c}));
   } else if ([3, 5, 7].includes(game.pair)) {
     game.currentCast = 'All Things End';
-    // All Things End uses the previous even set snapshot, not current player positions.
-    spawnStaticAllThingsEndCleavesFromTimeline();
+    // Cleave visuals disabled in v22: keep the set label but do not draw boss/clone cleaves.
+    game.clones = [];
+    game.cleaves = [];
   } else {
     game.currentCast = 'Towers';
   }
@@ -462,31 +507,10 @@ function previousEvenSetForAllThingsEnd(setNumber) {
 }
 
 function spawnStaticAllThingsEndCleavesFromTimeline() {
-  const evenSet = previousEvenSetForAllThingsEnd(game.pair);
-  if (!evenSet) return;
-
-  // Temporarily compute the previous even-set towers so the automatic bait is based on that set,
-  // then restore the currently displayed towers. This keeps set 3 cleaves exactly as set 2.
-  const currentTowers = game.towers.map(t => ({ ...t }));
-  const savedPair = game.pair;
-  game.pair = evenSet;
-  const step = Math.PI / 8;
-  const idxA = (game.baseTowerIndex + (game.pair - 1)) % 16;
-  const angA = idxA * step;
-  const angB = angA + TOWER_ANGLE_SEPARATION;
-  const a = pointFromAngle(TOWER_RADIUS_FROM_CENTER, angA);
-  const b = pointFromAngle(TOWER_RADIUS_FROM_CENTER, angB);
-  game.towers = [
-    { id: 'A', x: a.x, y: a.y, r: TOWER_R, markerIndex: idxA },
-    { id: 'B', x: b.x, y: b.y, r: TOWER_R, markerIndex: ((angB / step) % 16).toFixed(1) },
-  ];
-  const snap = ensureCloneSnapshot(evenSet);
-  game.pair = savedPair;
-  game.towers = currentTowers;
-
-  game.previousEnd = snap.cast;
-  game.clones = snap.clones.map(c => ({ ...c }));
-  game.cleaves = snap.cleaves.map(c => ({ ...c }));
+  // Cleave visuals disabled in v22. All Things End remains labeled, but boss/clone
+  // cleave rectangles are intentionally not generated because they were visually confusing.
+  game.clones = [];
+  game.cleaves = [];
 }
 
 
@@ -561,7 +585,7 @@ function resolveTowers() {
     if (p.sign === 'stack') resolveStack(p, hits);
   }
 
-  // On Future/Past End pairs, the boss cast also finishes at 5s.
+  // On Future/Past End pairs, the boss cast also finishes with the tower timer.
   // Clones appear only now, and their hits are checked in the same hit map so
   // clone + circle/cone/stack overlap correctly fails.
   if (['Future End', 'Past End'].includes(game.currentCast)) {
@@ -693,7 +717,7 @@ function loadPairSet(pairNumber) {
     while (game.pair < targetPair) {
       const fromSet = game.pair;
       if (!game.markerTransitionsDone[fromSet]) {
-        assignNextSetSignsToTowerSoakers(fromSet + 1);
+        assignNextSetSignsToTowerSoakers(fromSet + 1, fromSet);
         game.markerTransitionsDone[fromSet] = true;
       }
       game.pair += 1;
@@ -713,7 +737,416 @@ function loadPairSet(pairNumber) {
   updateUI();
 }
 
+function selectedStrat() {
+  const el = document.getElementById('stratSelect');
+  return el ? el.value : 'manual';
+}
+
+function controlledPlayerId() {
+  const el = document.getElementById('controlledPlayerSelect');
+  return el ? el.value : null;
+}
+
+function kroxyPullPositions() {
+  // Positions are intentionally paired along each diagonal.
+  // The first name in each pair is slightly farther from the boss, the second is closer.
+  return {
+    // Quadrant 1 / northwest: H1 > T1
+    H1: pointFromAngle(205, -135 * Math.PI / 180),
+    T1: pointFromAngle(172, -135 * Math.PI / 180),
+
+    // Quadrant 2 / northeast: D1 > D3
+    D1: pointFromAngle(205, -45 * Math.PI / 180),
+    D3: pointFromAngle(172, -45 * Math.PI / 180),
+
+    // Quadrant 3 / southwest: H2 > T2
+    H2: pointFromAngle(205, 135 * Math.PI / 180),
+    T2: pointFromAngle(172, 135 * Math.PI / 180),
+
+    // Quadrant 4 / southeast: D2 > D4
+    D2: pointFromAngle(205, 45 * Math.PI / 180),
+    D4: pointFromAngle(172, 45 * Math.PI / 180),
+  };
+}
+
+function applyKroxyPullPositions() {
+  if (!game) return;
+  const positions = kroxyPullPositions();
+  for (const p of game.players) {
+    const pos = positions[p.id];
+    if (!pos) continue;
+    p.x = pos.x;
+    p.y = pos.y;
+    p.targetX = pos.x; p.targetY = pos.y; p.moveStartX = pos.x; p.moveStartY = pos.y; p.moveT = 1; p.moveDur = 0;
+    clampToArena(p);
+  }
+  game.effects = [];
+  game.fail = null;
+  log('Kroxy-Rinnon(341): pull positions set to H1>T1 / D1>D3 / H2>T2 / D2>D4 quadrants.');
+}
+
+function kroxyPairGroups() {
+  return {
+    HT1: ['H1','T1'],
+    D13: ['D1','D3'],
+    HT2: ['H2','T2'],
+    D24: ['D2','D4'],
+  };
+}
+
+function activePairGroups() {
+  if (selectedStrat && selectedStrat() === 'kroxy') return kroxyPairGroups();
+  return { T: ['T1','T2'], H: ['H1','H2'], D12: ['D1','D2'], D34: ['D3','D4'] };
+}
+
+function getPlayer(id) { return game.players.find(p => p.id === id); }
+
+function playerPairId(id) {
+  const groups = activePairGroups();
+  for (const [pairId, members] of Object.entries(groups)) {
+    if (members.includes(id)) return pairId;
+  }
+  return id;
+}
+
+function pairMembers(pairId) {
+  return activePairGroups()[pairId] || [];
+}
+
+function allPairIds() {
+  return Object.keys(activePairGroups());
+}
+
+function earlyPairIds() {
+  const pairs = allPairIds();
+  return pairs.filter(pairId => pairMembers(pairId).some(id => (getPlayer(id)?.firstSign || getPlayer(id)?.sign) === 'stack'));
+}
+
+function soakerIdsForSet(setNumber) {
+  const early = earlyPairIds();
+  const late = allPairIds().filter(x => !early.includes(x));
+  const useEarly = [1,2,3,8].includes(setNumber);
+  const chosenPairs = useEarly ? early : late;
+  let ids = chosenPairs.flatMap(pairMembers);
+
+  // The Kroxy timeline is pair-based, not position-based. This is important when
+  // using Jump to set: jumping forward should update markers for whoever WOULD
+  // have soaked the previous set, not whoever happens to be standing in towers now.
+  if (selectedStrat && selectedStrat() === 'kroxy' && ids.length === 4) {
+    return ids.slice(0, 4);
+  }
+
+  // Manual fallback: use actual tower positions if the pair logic does not yield 4.
+  if (ids.length !== 4) {
+    ids = [];
+    for (const t of game.towers) {
+      for (const p of getTowerSoakers(t)) {
+        if (!ids.includes(p.id)) ids.push(p.id);
+      }
+    }
+  }
+  return ids.slice(0, 4);
+}
+
+function soakerIdsForCurrentSet() {
+  return soakerIdsForSet(game.pair);
+}
+
+function towerGeometry() {
+  const mid = currentTowerMidpoint();
+  const radial = { x: (mid.x - C.x), y: (mid.y - C.y) };
+  const rd = Math.hypot(radial.x, radial.y) || 1;
+  radial.x /= rd; radial.y /= rd;
+
+  // Screen coordinates have Y increasing downward.
+  // If you stand INSIDE/near the boss and face OUTSIDE toward the tower pair:
+  //   right-hand side = clockwise perpendicular
+  //   left-hand side  = counter-clockwise perpendicular
+  // This vector points to the RIGHT-hand side. Therefore negative projection = LEFT tower.
+  const rightVec = { x: -radial.y, y: radial.x };
+
+  const towers = game.towers.slice().sort((a,b) => {
+    const ap = (a.x - mid.x) * rightVec.x + (a.y - mid.y) * rightVec.y;
+    const bp = (b.x - mid.x) * rightVec.x + (b.y - mid.y) * rightVec.y;
+    return ap - bp; // negative = left, positive = right
+  });
+
+  // tangent/rightVec is still useful for side offsets: +side = right, -side = left.
+  return { mid, radial, tangent: rightVec, leftTower: towers[0], rightTower: towers[1] };
+}
+
+function posRelative(base, radial, tangent, out = 0, side = 0) {
+  return { x: base.x + radial.x * out + tangent.x * side, y: base.y + radial.y * out + tangent.y * side };
+}
+
+function assignSoakersToTowers(soakerIds, isOdd = (game.pair % 2 === 1)) {
+  // Kroxy-Rinnon tower assignment.
+  // Odd sets keep the tuned logic:
+  //   LEFT tower = spread/circle side, RIGHT tower = cone side.
+  //   Stacks: supports prefer RIGHT, DPS prefer LEFT.
+  // Even sets use the sticky-home rule:
+  //   D3/D4 stay LEFT, H1/H2 stay RIGHT whenever they are soaking.
+  //   D1/D2/T1/T2 are the only flex players, with flex priority D1 > D2 > T1 > T2.
+  //   Each tower should end with exactly one cone and one spread.
+  const ids = soakerIds.slice();
+
+  if (!isOdd) {
+    const flexPriority = ['D1','D2','T1','T2'];
+    function homeSide(id) {
+      // Permanent home sides for even-set solves.
+      if (id === 'D3' || id === 'D4' || id === 'D1' || id === 'D2') return 'left';
+      if (id === 'H1' || id === 'H2' || id === 'T1' || id === 'T2') return 'right';
+      return 'left';
+    }
+    function moveCost(id, side) {
+      if (homeSide(id) === side) return 0;
+      // D3/D4 and H1/H2 are anchors: avoid moving unless there is literally no valid solve.
+      if (['D3','D4','H1','H2'].includes(id)) return 1000;
+      const idx = flexPriority.indexOf(id);
+      return idx >= 0 ? (idx + 1) : 100;
+    }
+    function hasConeAndCircle(list) {
+      const signs = list.map(id => getPlayer(id)?.sign);
+      return signs.includes('cone') && signs.includes('circle');
+    }
+
+    let best = null;
+    // Try every possible 2/2 split and choose the valid one with lowest flex cost.
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const left = [ids[i], ids[j]];
+        const right = ids.filter(id => !left.includes(id));
+        if (right.length !== 2) continue;
+        const valid = hasConeAndCircle(left) && hasConeAndCircle(right);
+        const cost = left.reduce((sum, id) => sum + moveCost(id, 'left'), 0) + right.reduce((sum, id) => sum + moveCost(id, 'right'), 0);
+        const candidate = { left, right, valid, cost };
+        if (!best || (candidate.valid && !best.valid) || (candidate.valid === best.valid && candidate.cost < best.cost)) {
+          best = candidate;
+        }
+      }
+    }
+
+    if (best) return { left: best.left, right: best.right };
+
+    // Fallback if something unexpected happens.
+    return {
+      left: ids.filter(id => homeSide(id) === 'left').slice(0, 2),
+      right: ids.filter(id => homeSide(id) === 'right').slice(0, 2),
+    };
+  }
+
+  // Odd set logic, already tuned.
+  const dpsStackPriority = ['D3','D4','D1','D2'];
+  const supStackPriority = ['H1','H2','T1','T2'];
+  let left = ids.filter(id => getPlayer(id)?.sign === 'circle');
+  let right = ids.filter(id => getPlayer(id)?.sign === 'cone');
+  const stacks = ids.filter(id => getPlayer(id)?.sign === 'stack');
+
+  for (const id of supStackPriority) {
+    if (stacks.includes(id) && right.length < 2) right.push(id);
+  }
+  for (const id of dpsStackPriority) {
+    if (stacks.includes(id) && left.length < 2) left.push(id);
+  }
+  for (const id of [...supStackPriority, ...dpsStackPriority]) {
+    if (!stacks.includes(id) || left.includes(id) || right.includes(id)) continue;
+    if (left.length < 2) left.push(id);
+    else if (right.length < 2) right.push(id);
+  }
+  const unused = ids.filter(id => !left.includes(id) && !right.includes(id));
+  while (left.length < 2 && unused.length) left.push(unused.shift());
+  while (right.length < 2 && unused.length) right.push(unused.shift());
+  while (left.length > 2) {
+    const movable = left.findIndex(id => getPlayer(id)?.sign === 'stack');
+    right.push(left.splice(movable >= 0 ? movable : left.length - 1, 1)[0]);
+  }
+  while (right.length > 2) {
+    const movable = right.findIndex(id => getPlayer(id)?.sign === 'stack');
+    left.push(right.splice(movable >= 0 ? movable : right.length - 1, 1)[0]);
+  }
+  return { left, right };
+}
+function movePlayerTo(id, pnt, controlled, animate = false) {
+  if (id === controlled) return;
+  const p = getPlayer(id);
+  if (!p) return;
+  const target = { x: pnt.x, y: pnt.y };
+  clampToArena(target);
+  if (animate) {
+    p.moveStartX = p.x;
+    p.moveStartY = p.y;
+    p.targetX = target.x;
+    p.targetY = target.y;
+    p.moveT = 0;
+    p.moveDur = 0.75;
+  } else {
+    p.x = target.x;
+    p.y = target.y;
+    p.targetX = target.x;
+    p.targetY = target.y;
+    p.moveT = 1;
+    p.moveDur = 0;
+  }
+}
+
+function updatePlayerAnimations(dt) {
+  for (const p of game.players) {
+    if (!p.moveDur || p.moveT >= p.moveDur) continue;
+    p.moveT = Math.min(p.moveDur, p.moveT + dt);
+    const raw = p.moveT / p.moveDur;
+    const t = 1 - Math.pow(1 - raw, 3); // smooth ease-out
+    p.x = p.moveStartX + (p.targetX - p.moveStartX) * t;
+    p.y = p.moveStartY + (p.targetY - p.moveStartY) * t;
+  }
+}
+
+function placeTowerSoaker(id, tower, sideSign, geo, isOdd, controlled, animate = false, towerSide = 'left') {
+  const p = getPlayer(id);
+  if (!p) return;
+  const safeEdge = TOWER_R - PLAYER_HIT_R - 6;
+  let out = 0, side = sideSign * 10;
+
+  // Tower identities are fixed by the strat:
+  //   left  = spread/circle tower
+  //   right = cone tower
+  // Keep these placements consistent across quadrants/sets.
+  if (p.sign === 'circle') {
+    // Spreads go on the left tower, outer edge away from the boss.
+    out = safeEdge * 0.82;
+    side = sideSign * 10;
+  } else if (p.sign === 'cone') {
+    // Cone soakers are the important clone baits on EVEN sets.
+    // Odd sets keep the cone group on the right/outside edge as tuned before.
+    // Even sets move cone soakers to the boss-side/front edge of the cone tower
+    // so they become 2 of the 4 nearest players to the boss for Future/Past clones.
+    if (!isOdd) {
+      // Even-set cones stand at the FRONT of their tower, close to the boss,
+      // but slightly toward the OUTER east/west edge of that tower. This keeps
+      // them away from the gap between towers and lets the outside baiter stand
+      // directly in front/outside of them.
+      out = -safeEdge * 0.76;
+      side = (towerSide === 'left' ? -1 : 1) * safeEdge * 0.42;
+    } else if (towerSide === 'right') {
+      out = safeEdge * 0.48;
+      side = safeEdge * 0.68;
+    } else {
+      out = safeEdge * 0.82;
+      side = sideSign * 10;
+    }
+  } else if (p.sign === 'stack') {
+    if (!isOdd) {
+      // On even sets, keep stacks away from the boss-side front so they do NOT
+      // accidentally take the clone bait that belongs to cone soakers.
+      out = safeEdge * 0.20;
+      side = sideSign * 16;
+    } else if (towerSide === 'left') {
+      // Stack helping the spread tower: boss-side edge, close to the boss hitbox.
+      out = -safeEdge * 0.72;
+      side = sideSign * 12;
+    } else {
+      // Stack helping the cone tower: keep it inside the tower, but push it toward
+      // the outer support/helper side AND slightly boss-side. This puts the stack
+      // closer to the outside stack helper instead of sitting in the tower center.
+      out = -safeEdge * 0.50;
+      side = safeEdge * 0.68;
+    }
+  } else {
+    out = 0;
+    side = sideSign * 10;
+  }
+  movePlayerTo(id, posRelative(tower, geo.radial, geo.tangent, out, side), controlled, animate);
+}
+
+function autoPlaceKroxyRinnon() {
+  if (!game || selectedStrat() !== 'kroxy') return;
+  const controlled = controlledPlayerId();
+  const geo = towerGeometry();
+  const soakerIds = soakerIdsForCurrentSet();
+  const soakerSet = new Set(soakerIds);
+  const outs = game.players.map(p => p.id).filter(id => !soakerSet.has(id));
+  const isOdd = game.pair % 2 === 1;
+  const assign = assignSoakersToTowers(soakerIds, isOdd);
+
+  // Soakers: LEFT tower = DPS priority, RIGHT tower = support priority.
+  // Small side offsets avoid exact overlaps.
+  for (let i=0; i<assign.left.length; i++) placeTowerSoaker(assign.left[i], geo.leftTower, i === 0 ? -1 : 1, geo, isOdd, controlled, true, 'left');
+  for (let i=0; i<assign.right.length; i++) placeTowerSoaker(assign.right[i], geo.rightTower, i === 0 ? -1 : 1, geo, isOdd, controlled, true, 'right');
+
+  // In Kroxy-Rinnon(341), cone bait is always handled from the RIGHT tower reference
+  // when viewed from inside/near boss facing outside.
+  const coneTower = geo.rightTower;
+  const circleTower = geo.leftTower;
+
+  if (isOdd) {
+    // Odd sets:
+    // - outside DPS stay near the LEFT/circle tower, boss side.
+    // - ONLY outside H1/H2 bait cones.
+    // - outside T1/T2 are NOT cone baiters; they sit boss-side of the RIGHT/cone tower for stacks.
+    const outsideDps = outs.filter(id => getPlayer(id)?.role === 'dps');
+    const coneBaiters = ['H1','H2'].filter(id => outs.includes(id));
+    const outerTanks = ['T1','T2'].filter(id => outs.includes(id));
+
+    outsideDps.forEach((id, i) => {
+      movePlayerTo(id, posRelative(circleTower, geo.radial, geo.tangent, -(TOWER_R + 18), (i - (outsideDps.length-1)/2) * 18), controlled, true);
+    });
+
+    coneBaiters.forEach((id, i) => {
+      // H1/H2 are the cone baiters. Keep them just outside/near the outer-right edge so they are closer to the cone soaker than the stack players.
+      movePlayerTo(id, posRelative(coneTower, geo.radial, geo.tangent, 34, 42 + i * 8), controlled, true);
+    });
+
+    outerTanks.forEach((id, i) => {
+      // T1/T2 are stack helpers, not cone baiters: keep them boss-side/right-side but slightly farther from the cone soaker than H1/H2.
+      movePlayerTo(id, posRelative(coneTower, geo.radial, geo.tangent, -62, 12 + i * 6), controlled, true);
+    });
+
+    outs.filter(id => !outsideDps.includes(id) && !coneBaiters.includes(id) && !outerTanks.includes(id))
+      .forEach((id, i) => movePlayerTo(id, posRelative(coneTower, geo.radial, geo.tangent, -(TOWER_R + 8), (i ? 1 : -1) * 34), controlled, true));
+  } else {
+    // Even sets:
+    // - tower soakers have 2 cones + 2 spreads.
+    // - spreads stand inside towers on the outside edge, away from boss.
+    // - cones stand inside towers on the boss-side/front edge and bait the 2 inside clones.
+    // - 2 outer clones are baited by outer D1 > D2 > T1 > T2 on the opposite side of boss.
+    // - outer H1/H2/D3/D4 stand outside the tower, close to the cone soakers, to bait cones away.
+    const outerClonePriority = ['D1','D2','T1','T2'];
+    const outerCloneBaiters = outerClonePriority.filter(id => outs.includes(id)).slice(0, 2);
+
+    outerCloneBaiters.forEach((id, i) => {
+      // Far opposite side of boss, away from towers. These should be the two guaranteed outer clone baits.
+      movePlayerTo(id, posRelative(C, geo.radial, geo.tangent, -195, (i - 0.5) * 44), controlled, true);
+    });
+
+    // Cone baiters for the cone AoEs. Use outside H1/H2 first, then D3/D4.
+    // These are intentionally outside the tower hitbox, but close to the cone soaker so the cone aims at them.
+    const outerConeBaitPriority = ['H1','H2','D3','D4'];
+    const outerConeBaiters = outerConeBaitPriority.filter(id => outs.includes(id) && !outerCloneBaiters.includes(id));
+
+    const coneAssignments = [];
+    for (const id of assign.left) if (getPlayer(id)?.sign === 'cone') coneAssignments.push({ id, tower: geo.leftTower, sideSign: assign.left.indexOf(id) === 0 ? -1 : 1 });
+    for (const id of assign.right) if (getPlayer(id)?.sign === 'cone') coneAssignments.push({ id, tower: geo.rightTower, sideSign: assign.right.indexOf(id) === 0 ? -1 : 1 });
+
+    outerConeBaiters.forEach((id, i) => {
+      const ca = coneAssignments[i % Math.max(1, coneAssignments.length)] || { tower: coneTower, sideSign: 1 };
+      // Even cones are in FRONT (boss-side). The baiter must also be in front,
+      // but outside on the east/west OUTER edge of that tower — never in the
+      // middle gap between the two towers. Left tower baits to the left/outside;
+      // right tower baits to the right/outside.
+      const outerSide = (ca.tower === geo.leftTower) ? -1 : 1;
+      movePlayerTo(id, posRelative(ca.tower, geo.radial, geo.tangent, -40, outerSide * 64), controlled, true);
+    });
+
+    // Remaining outside players: keep them grouped safely away from the cone line and away from clone bait priority.
+    outs.filter(id => !outerCloneBaiters.includes(id) && !outerConeBaiters.includes(id))
+      .forEach((id, i, arr) => {
+        movePlayerTo(id, posRelative(coneTower, geo.radial, geo.tangent, -(TOWER_R + 26), (i - (arr.length - 1) / 2) * 18), controlled, true);
+      });
+  }
+  log(`Kroxy-Rinnon(341): moved all players except ${controlled || 'none'} for set ${game.pair}.`);
+}
+
 function startCurrentSet() {
+  autoPlaceKroxyRinnon();
   // If a mechanic failed, keep the arena exactly as-is so you can move players,
   // clear the failure, and re-run the same tower set for explanation/practice.
   if (game.ended) return;
@@ -732,14 +1165,15 @@ function startCurrentSet() {
   }
   if (game.phase === 'planning') {
     game.effects = [];
-    // Keep All Things End clone cleaves fixed from the previous timeline set.
-    if (game.currentCast === 'All Things End' && (!game.cleaves || game.cleaves.length === 0)) spawnStaticAllThingsEndCleavesFromTimeline();
+    // Cleave visuals are disabled in v22.
+    if (game.currentCast === 'All Things End') { game.clones = []; game.cleaves = []; }
     game.timer = PAIR_TIME;
     game.running = true;
   }
 }
 
 function update(dt) {
+  updatePlayerAnimations(dt);
   if (!game.ended) {
     for (const p of game.players) p.vulnUntil = Math.max(0, p.vulnUntil - dt);
   }
@@ -838,26 +1272,14 @@ function drawClonesAndCleaves() {
     ctx.fillText('clone', clone.x, clone.y + 4);
     ctx.restore();
   }
-  if (game.currentCast === 'All Things End') {
-    for (const c of game.cleaves || []) drawCleave(c.x, c.y, c.aim);
-  }
+  // Cleave rectangles disabled in v22.
 }
 
 function drawCleave(x, y, aim) {
-  // All Things End cleave is not a cone: it is the entire square/half-arena
-  // in the direction the boss/clone is facing.
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(aim);
-  ctx.fillStyle = 'rgba(239, 68, 68, 0.18)';
-  ctx.strokeStyle = 'rgba(239, 68, 68, 0.70)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.rect(0, -ARENA_R, ARENA_R * 2, ARENA_R * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
+  // Disabled in v22.
+  return;
 }
+
 
 function drawEffects() {
   for (const e of game.effects) {
@@ -999,10 +1421,12 @@ canvas.addEventListener('contextmenu', (evt) => {
 document.getElementById('startBtn').addEventListener('click', startCurrentSet);
 document.getElementById('resetBtn').addEventListener('click', resetGame);
 document.getElementById('loadPairBtn').addEventListener('click', () => loadPairSet(document.getElementById('pairSelect').value));
-
-document.getElementById('hitboxSlider').addEventListener('input', (evt) => {
-  PLAYER_HIT_R = Number(evt.target.value);
-  document.getElementById('hitboxValue').textContent = String(PLAYER_HIT_R);
+document.getElementById('controlledPlayerSelect').addEventListener('change', (evt) => { game.selectedId = evt.target.value; });
+document.getElementById('stratSelect').addEventListener('change', (evt) => {
+  if (evt.target.value === 'kroxy') {
+    applyKroxyPullPositions();
+    updateUI();
+  }
 });
 
 document.addEventListener('keydown', (evt) => {
