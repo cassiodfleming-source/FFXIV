@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Forsaken FFXIV</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #06090f;
+    color: #e8eef8;
+    font-family: Arial, Helvetica, sans-serif;
+    overflow: hidden;
+  }
+  #app {
+    display: grid;
+    grid-template-columns: 260px 1fr 280px;
+    grid-template-rows: 58px 1fr;
+    height: 100vh;
+  }
+  header {
+    grid-column: 1 / 4;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: #0b111c;
+    border-bottom: 1px solid #223047;
+  }
+  button {
+    border: 1px solid #344866;
+    color: white;
+    background: #172238;
+    border-radius: 8px;
+    padding: 9px 14px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button:hover { background: #22324f; }
+  button.green { background: #0e6b35; }
+  button.blue { background: #10558a; }
+  button.red { background: #79222a; }
+  .pill {
+    padding: 8px 12px;
+    border: 1px solid #2a3d5c;
+    border-radius: 999px;
+    color: #bcd0ec;
+    background: #0d1524;
+  }
+  aside {
+    background: #080d16;
+    border-right: 1px solid #223047;
+    padding: 12px;
+    overflow: auto;
+  }
+  aside.right { border-right: 0; border-left: 1px solid #223047; }
+  .card {
+    border: 1px solid #263853;
+    background: rgba(12, 19, 31, 0.9);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .card h3 {
+    margin: 0 0 10px;
+    font-size: 14px;
+    color: #9fb7d8;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .big { font-size: 30px; font-weight: 800; color: #7ec7ff; }
+  .warn { color: #ff6b6b; }
+  .ok { color: #86efac; }
+  .yellow { color: #facc15; }
+  #arenaWrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background: radial-gradient(circle at center, #111a28 0%, #06090f 75%);
+  }
+  canvas {
+    width: min(100%, calc(100vh - 58px));
+    height: min(100%, calc(100vh - 58px));
+    max-width: 100%;
+    max-height: 100%;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { padding: 7px 4px; border-bottom: 1px solid #223047; text-align: left; }
+  th:last-child, td:last-child { text-align: right; }
+  .roleDot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
+  .log { font-size: 13px; line-height: 1.35; max-height: 240px; overflow:auto; }
+  .log div { margin-bottom: 6px; color:#c8d6ec; }
+  .small { font-size: 13px; color: #aebddb; line-height: 1.4; }
+  .kbd { font-family: monospace; background:#111a2b; border:1px solid #304562; padding:1px 5px; border-radius:4px; }
+  #disclaimer { position: fixed; left: 260px; right: 280px; bottom: 6px; text-align: center; font-size: 12px; color: #91a4c2; pointer-events: none; text-shadow: 0 1px 2px #000; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <button class="green" id="startBtn">▶ Start</button>
+    <button class="red" id="resetBtn">↻ Reset</button>
+    <span class="pill"><b>Forsaken FFXIV</b></span>
+    <span class="pill">Pair <b id="pairLabel">1</b> / 8</span>
+    <span class="pill">Jump to set: <select id="pairSelect" style="background:#111a2b;color:#e8eef8;border:1px solid #304562;border-radius:6px;padding:4px 6px;font-weight:700">
+      <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+      <option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option>
+    </select> <button id="loadPairBtn" style="padding:4px 8px">Load</button></span>
+    <span class="pill">State: <b id="stateLabel">Planning</b></span>
+    <span class="pill">Selected: <b id="selectedLabel">None</b></span>
+    <span class="pill">Tip: click player, right-click arena to move</span>
+  </header>
+
+  <aside>
+    <div class="card">
+      <h3>Current mechanic</h3>
+      <div>Cast: <b id="castLabel">Towers</b></div>
+      <div>Previous End: <b id="prevEndLabel">None</b></div>
+      <div>Tower resolve in:</div>
+      <div class="big" id="timerLabel">2.0s</div>
+    </div>
+    <div class="card">
+      <h3>Mechanic tuning</h3>
+      <div class="small">
+        Invisible player hitbox radius: <b><span id="hitboxValue">10</span> px</b><br>
+        <input id="hitboxSlider" type="range" min="6" max="18" step="1" value="10" style="width:100%; margin-top:8px;">
+        <br>This hidden circle is used for tower soaking, stack checks, circle hits, clone hits, and cone hits. It counts only when fully covered.
+      </div>
+    </div>
+    <div class="card">
+      <h3>Objective</h3>
+      <div class="small">
+        Each tower needs exactly <b>2</b> players.<br><br>
+        Only tower soakers resolve their head sign.<br><br>
+        Circle = do not clip anyone.<br>
+        Cone = aims at closest player.<br>
+        Stack = exactly 3 players inside.<br><br>
+        A player fails if hit by more than one vulnerability event at the same resolve.<br><br>
+        Every player needs at least <b>4</b> soaks by the end.
+      </div>
+    </div>
+    <div class="card">
+      <h3>Controls</h3>
+      <div class="small">
+        <span class="kbd">Click</span> select player<br>
+        <span class="kbd">Right click</span> move selected<br>
+        <span class="kbd">Space</span> start / next set<br>
+        <span class="kbd">R</span> reset<br>
+      </div>
+    </div>
+  </aside>
+
+  <main id="arenaWrap">
+    <canvas id="game" width="900" height="900"></canvas>
+  </main>
+
+  <aside class="right">
+    <div class="card">
+      <h3>Players</h3>
+      <table>
+        <thead><tr><th>Player</th><th>1st sign</th><th>Soaks</th></tr></thead>
+        <tbody id="playerTable"></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Fail / status</h3>
+      <div id="failBox" class="small ok">No failures yet.</div>
+    </div>
+    <div class="card">
+      <h3>Event log</h3>
+      <div class="log" id="logBox"></div>
+    </div>
+  </aside>
+</div>
+<div id="disclaimer">Practice/explanation tool only — version 1. Mechanic sizes and timings may be different from the real encounter. Credits: KassiusFleming.</div>
+
+<script>
+'use strict';
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const W = 900;
+const H = 900;
+const C = { x: W / 2, y: H / 2 };
+const ARENA_R = 410;
+const BOSS_R = 95;
+const PLAYER_R = 18;
+const TOWER_R = 55;
+let PLAYER_HIT_R = 10; // Invisible mechanical hitbox radius, adjustable in the left panel.
+function towerSoakMargin() { return PLAYER_HIT_R; }
+const CIRCLE_R = TOWER_R;
+const STACK_R = TOWER_R;
+const CLONE_R = 48;
+const CONE_LEN = 390;
+const CONE_HALF_ANGLE = Math.PI / 3.6;
+
+const PAIR_TIME = 2.0;
+const BOSS_CAST_TIME = 2.0;
+const POST_RESOLVE_TIME = 0.0;
+const TOWER_RADIUS_FROM_CENTER = 325;
+const TOWER_ANGLE_SEPARATION = Math.PI * 3 / 16; // 33.75° between tower centers
+
+const playersTemplate = [
+  { id: 'T1', role: 'support', job: 'Tank 1', color: '#1d8cff' },
+  { id: 'T2', role: 'support', job: 'Tank 2', color: '#1d8cff' },
+  { id: 'H1', role: 'support', job: 'Healer 1', color: '#22c55e' },
+  { id: 'H2', role: 'support', job: 'Healer 2', color: '#22c55e' },
+  { id: 'D1', role: 'dps', job: 'DPS 1', color: '#ef4444' },
+  { id: 'D2', role: 'dps', job: 'DPS 2', color: '#ef4444' },
+  { id: 'D3', role: 'dps', job: 'DPS 3', color: '#ef4444' },
+  { id: 'D4', role: 'dps', job: 'DPS 4', color: '#ef4444' },
+];
+
+let game;
+let lastTs = performance.now();
+
+function rand(a, b) { return a + Math.random() * (b - a); }
+function choice(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function angleTo(a, b) { return Math.atan2(b.y - a.y, b.x - a.x); }
+function normAngle(a) {
+  while (a <= -Math.PI) a += Math.PI * 2;
+  while (a > Math.PI) a -= Math.PI * 2;
+  return a;
+}
+function pointFromAngle(r, ang) { return { x: C.x + Math.cos(ang) * r, y: C.y + Math.sin(ang) * r }; }
+function clampToArena(p) {
+  const dx = p.x - C.x;
+  const dy = p.y - C.y;
+  const d = Math.hypot(dx, dy);
+  const max = ARENA_R - PLAYER_R - 5;
+  if (d > max) {
+    p.x = C.x + dx / d * max;
+    p.y = C.y + dy / d * max;
+  }
+}
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function log(msg) {
+  const line = document.createElement('div');
+  line.textContent = msg;
+  document.getElementById('logBox').prepend(line);
+}
+
+function createInitialSigns(players) {
+  const support = players.filter(p => p.role === 'support');
+  const dps = players.filter(p => p.role === 'dps');
+  const supportsGet = Math.random() < 0.5 ? 'circle' : 'cone';
+  const dpsGet = supportsGet === 'circle' ? 'cone' : 'circle';
+  assignThreePlusStack(support, supportsGet);
+  assignThreePlusStack(dps, dpsGet);
+}
+
+function assignThreePlusStack(group, sign) {
+  const shuffled = shuffle(group);
+  shuffled[0].sign = sign;
+  shuffled[1].sign = sign;
+  shuffled[2].sign = sign;
+  shuffled[3].sign = 'stack';
+}
+
+function makeSignTimeline(players) {
+  // Timeline mode: set 1 is the pull marker state. Later sets are not pre-rerolled
+  // for everyone. Only players who soaked towers get new markers when you move
+  // forward in the timeline.
+  const timeline = {};
+  timeline[1] = Object.fromEntries(players.map(p => [p.id, p.sign]));
+  return timeline;
+}
+
+function snapshotSigns() {
+  return Object.fromEntries(game.players.map(p => [p.id, p.sign]));
+}
+
+function restoreSigns(snapshot) {
+  if (!snapshot) return;
+  for (const p of game.players) p.sign = snapshot[p.id] || p.sign;
+}
+
+function applyTimelineSigns(setNumber) {
+  const signs = game.signTimeline?.[setNumber];
+  restoreSigns(signs);
+}
+
+function assignNextSetSignsToTowerSoakers(nextSetNumber) {
+  // Only players currently soaking towers receive the new markers for the next set.
+  // Everyone outside towers keeps their marker. Pattern is timeline-based:
+  // Target sets 3, 5, and 7 = 2 stacks + 1 cone + 1 circle
+  // Other target sets = 2 cones + 2 circles
+  const towerPlayers = [];
+  for (const tower of game.towers) {
+    for (const p of getTowerSoakers(tower)) {
+      if (!towerPlayers.includes(p)) towerPlayers.push(p);
+    }
+  }
+  if (towerPlayers.length === 0) {
+    log(`No tower players detected for set ${game.pair}; markers were unchanged.`);
+    return;
+  }
+  if (towerPlayers.length !== 4) {
+    log(`Warning: ${towerPlayers.length} tower players detected while advancing markers; assigning only detected players.`);
+  }
+
+  const shuffled = shuffle(towerPlayers.slice());
+  const pattern = ([3, 5, 7].includes(nextSetNumber))
+    ? ['stack', 'stack', 'cone', 'circle']
+    : ['cone', 'cone', 'circle', 'circle'];
+  for (let i = 0; i < shuffled.length; i++) {
+    shuffled[i].sign = pattern[i % pattern.length];
+  }
+  log(`Set ${nextSetNumber} markers assigned only to previous tower players: ${shuffled.map(p => p.id + '=' + p.sign).join(', ')}.`);
+}
+
+function makeBossTimeline() {
+  const casts = {};
+  for (const set of [2,4,6,8]) casts[set] = Math.random() < 0.5 ? 'Future End' : 'Past End';
+  return casts;
+}
+
+function resetGame() {
+  // Pull positions: paired by quadrant, away from the towers.
+  // Canvas angles: 0° right, 90° down, -90° up.
+  // T pair = top-left, H pair = bottom-left, D1/D2 = top-right, D3/D4 = bottom-right.
+  const startPositions = {
+    // Closer to boss/center, kept in clear quadrant pairs.
+    T1: pointFromAngle(215, -140 * Math.PI / 180),
+    T2: pointFromAngle(215, -122 * Math.PI / 180),
+    H1: pointFromAngle(215, 140 * Math.PI / 180),
+    H2: pointFromAngle(215, 122 * Math.PI / 180),
+    D1: pointFromAngle(215, -58 * Math.PI / 180),
+    D2: pointFromAngle(215, -40 * Math.PI / 180),
+    D3: pointFromAngle(215, 58 * Math.PI / 180),
+    D4: pointFromAngle(215, 40 * Math.PI / 180),
+  };
+  const players = playersTemplate.map((p) => {
+    const pos = startPositions[p.id];
+    return { ...p, x: pos.x, y: pos.y, soaks: 0, sign: 'circle', vulnUntil: 0, selected: false, dead: false };
+  });
+  createInitialSigns(players);
+  for (const p of players) p.firstSign = p.sign;
+  game = {
+    players,
+    pair: 1,
+    running: false,
+    phase: 'planning',
+    timer: PAIR_TIME,
+    postTimer: POST_RESOLVE_TIME,
+    selectedId: null,
+    towers: [],
+    clones: [],
+    cleaves: [],
+    previousEnd: null,
+    currentCast: 'Towers',
+    fail: null,
+    effects: [],
+    ended: false,
+    baseTowerIndex: Math.floor(rand(0, 16)),
+    signTimeline: null,
+    signSnapshots: {},
+    markerTransitionsDone: {},
+    bossTimeline: null,
+    cloneSnapshots: {},
+  };
+  game.signTimeline = makeSignTimeline(players);
+  game.signSnapshots[1] = Object.fromEntries(players.map(p => [p.id, p.sign]));
+  game.bossTimeline = makeBossTimeline();
+  applyTimelineSigns(1);
+  spawnTowerPair();
+  document.getElementById('logBox').innerHTML = '';
+  log('Forsaken FFXIV. Press Start to resolve the current tower set.');
+  updateUI();
+}
+
+function spawnTowerPair() {
+  // Tower set rotation snaps to the arena pizza markers: set 2 is 22.5° clockwise from set 1,
+  // set 5 is 90° clockwise from set 1, etc. The towers themselves are now 33.75° apart.
+  const step = Math.PI / 8; // 22.5° rotation per selected set.
+  const idxA = (game.baseTowerIndex + (game.pair - 1)) % 16;
+  const angA = idxA * step;
+  const angB = angA + TOWER_ANGLE_SEPARATION;
+  const idxB = ((angB / step) % 16).toFixed(1);
+  const a = pointFromAngle(TOWER_RADIUS_FROM_CENTER, angA);
+  const b = pointFromAngle(TOWER_RADIUS_FROM_CENTER, angB);
+  game.towers = [
+    { id: 'A', x: a.x, y: a.y, r: TOWER_R, markerIndex: idxA },
+    { id: 'B', x: b.x, y: b.y, r: TOWER_R, markerIndex: idxB },
+  ];
+
+  game.clones = [];
+  game.cleaves = [];
+
+  if ([2, 4, 6, 8].includes(game.pair)) {
+    game.currentCast = game.bossTimeline?.[game.pair] || 'Future End';
+    // Clones do not appear at cast start. They appear when the boss cast finishes.
+    // If this set has already been loaded/resolved, keep the same snapshot.
+    if (game.cloneSnapshots[game.pair]) game.clones = game.cloneSnapshots[game.pair].clones.map(c => ({...c}));
+  } else if ([3, 5, 7].includes(game.pair)) {
+    game.currentCast = 'All Things End';
+    // All Things End uses the previous even set snapshot, not current player positions.
+    spawnStaticAllThingsEndCleavesFromTimeline();
+  } else {
+    game.currentCast = 'Towers';
+  }
+  log(`Pair ${game.pair} started: ${game.currentCast}. Towers on markers ${idxA} and ${idxB}.`);
+}
+
+function currentTowerMidpoint() {
+  if (!game.towers || game.towers.length < 2) return { x: C.x, y: C.y };
+  return { x: (game.towers[0].x + game.towers[1].x) / 2, y: (game.towers[0].y + game.towers[1].y) / 2 };
+}
+
+function ensureCloneSnapshot(evenSet) {
+  if (game.cloneSnapshots[evenSet]) return game.cloneSnapshots[evenSet];
+
+  // Snapshot based on the timeline moment when the even set is first reached.
+  // After this, moving players or jumping around will not move the clones/cleaves.
+  const nearest = game.players.slice().sort((a, b) => dist(a, C) - dist(b, C)).slice(0, 4);
+  const clones = nearest.map(p => ({ x: p.x, y: p.y, targetId: p.id }));
+  const tm = currentTowerMidpoint();
+  const sources = [{ x: C.x, y: C.y, label: 'boss' }, ...clones.map(c => ({ ...c, label: 'clone' }))];
+  const cleaves = sources.map(src => ({ x: src.x, y: src.y, aim: angleTo(tm, src), label: src.label }));
+  game.cloneSnapshots[evenSet] = {
+    cast: game.bossTimeline?.[evenSet] || 'Future End',
+    towerMidpoint: tm,
+    clones,
+    cleaves,
+  };
+  return game.cloneSnapshots[evenSet];
+}
+
+function spawnClonesOnNearestPlayers(applyHit = true) {
+  const snap = ensureCloneSnapshot(game.pair);
+  game.clones = snap.clones.map(c => ({ ...c }));
+  if (applyHit && ['Future End', 'Past End'].includes(game.currentCast)) {
+    const hits = new Map();
+    for (const clone of game.clones) {
+      for (const p of game.players) {
+        if (hitboxFullyInsideCircle(p, { x: clone.x, y: clone.y, r: CLONE_R })) addHit(hits, p.id, 'clone AoE');
+      }
+    }
+    applyHits(hits, 'Clone hits');
+    game.previousEnd = snap.cast;
+  }
+}
+
+function previousEvenSetForAllThingsEnd(setNumber) {
+  if (setNumber === 3) return 2;
+  if (setNumber === 5) return 4;
+  if (setNumber === 7) return 6;
+  return null;
+}
+
+function spawnStaticAllThingsEndCleavesFromTimeline() {
+  const evenSet = previousEvenSetForAllThingsEnd(game.pair);
+  if (!evenSet) return;
+
+  // Temporarily compute the previous even-set towers so the automatic bait is based on that set,
+  // then restore the currently displayed towers. This keeps set 3 cleaves exactly as set 2.
+  const currentTowers = game.towers.map(t => ({ ...t }));
+  const savedPair = game.pair;
+  game.pair = evenSet;
+  const step = Math.PI / 8;
+  const idxA = (game.baseTowerIndex + (game.pair - 1)) % 16;
+  const angA = idxA * step;
+  const angB = angA + TOWER_ANGLE_SEPARATION;
+  const a = pointFromAngle(TOWER_RADIUS_FROM_CENTER, angA);
+  const b = pointFromAngle(TOWER_RADIUS_FROM_CENTER, angB);
+  game.towers = [
+    { id: 'A', x: a.x, y: a.y, r: TOWER_R, markerIndex: idxA },
+    { id: 'B', x: b.x, y: b.y, r: TOWER_R, markerIndex: ((angB / step) % 16).toFixed(1) },
+  ];
+  const snap = ensureCloneSnapshot(evenSet);
+  game.pair = savedPair;
+  game.towers = currentTowers;
+
+  game.previousEnd = snap.cast;
+  game.clones = snap.clones.map(c => ({ ...c }));
+  game.cleaves = snap.cleaves.map(c => ({ ...c }));
+}
+
+
+function addCloneHitsToMap(hits) {
+  const snap = ensureCloneSnapshot(game.pair);
+  game.clones = snap.clones.map(c => ({ ...c }));
+  for (const clone of game.clones) {
+    for (const p of game.players) {
+      if (hitboxFullyInsideCircle(p, { x: clone.x, y: clone.y, r: CLONE_R })) addHit(hits, p.id, 'clone AoE');
+    }
+  }
+  game.effects.push(...game.clones.map(c => ({ type: 'clone', x: c.x, y: c.y, r: CLONE_R }))); 
+}
+
+function addHit(map, playerId, source) {
+  if (!map.has(playerId)) map.set(playerId, []);
+  map.get(playerId).push(source);
+}
+
+function hitboxFullyInsideCircle(player, circle, hitR = PLAYER_HIT_R) {
+  // The visible player circle is only UI. Mechanically, the smaller invisible
+  // hitbox must be completely covered by the tower/AoE to count.
+  return dist(player, circle) + hitR <= circle.r;
+}
+
+function pointInsideCone(px, py, source, aim) {
+  const d = Math.hypot(px - source.x, py - source.y);
+  const da = Math.abs(normAngle(Math.atan2(py - source.y, px - source.x) - aim));
+  return d <= CONE_LEN && da <= CONE_HALF_ANGLE;
+}
+
+function hitboxFullyInsideCone(player, source, aim, hitR = PLAYER_HIT_R) {
+  // Approximate "fully covered" by checking center + 12 edge points of the invisible hitbox.
+  if (!pointInsideCone(player.x, player.y, source, aim)) return false;
+  for (let i = 0; i < 12; i++) {
+    const a = i * Math.PI * 2 / 12;
+    if (!pointInsideCone(player.x + Math.cos(a) * hitR, player.y + Math.sin(a) * hitR, source, aim)) return false;
+  }
+  return true;
+}
+
+function getTowerSoakers(tower) {
+  return game.players.filter(p => hitboxFullyInsideCircle(p, tower, towerSoakMargin()));
+}
+
+function resolveTowers() {
+  if (game.ended) return;
+  const hits = new Map();
+  let messages = [];
+  const allSoakers = [];
+
+  for (const tower of game.towers) {
+    const soakers = getTowerSoakers(tower);
+    if (soakers.length !== 2) {
+      fail(`Tower ${tower.id} had ${soakers.length}/2 soakers.`);
+      return;
+    }
+    messages.push(`Tower ${tower.id}: ${soakers.map(p => p.id).join('+')}`);
+    allSoakers.push(...soakers);
+  }
+
+  const uniqueSoakers = [...new Set(allSoakers)];
+  if (uniqueSoakers.length !== 4) {
+    fail('A player was counted in both towers. Towers need 4 unique soakers.');
+    return;
+  }
+
+  for (const p of uniqueSoakers) {
+    p.soaks += 1;
+    if (p.sign === 'circle') resolveCircle(p, hits);
+    if (p.sign === 'cone') resolveCone(p, hits);
+    if (p.sign === 'stack') resolveStack(p, hits);
+  }
+
+  // On Future/Past End pairs, the boss cast also finishes at 5s.
+  // Clones appear only now, and their hits are checked in the same hit map so
+  // clone + circle/cone/stack overlap correctly fails.
+  if (['Future End', 'Past End'].includes(game.currentCast)) {
+    addCloneHitsToMap(hits);
+    game.previousEnd = game.currentCast;
+  }
+
+  applyHits(hits, 'Resolved hits');
+  if (game.fail) return;
+
+  // Do not update head markers here. This lets you press Start again and repeat the same setup.
+  // Use Jump to set when you want a new visible set of markers.
+  game.signSnapshots[game.pair] = snapshotSigns();
+  log(`Resolved. ${messages.join(' | ')}.`);
+
+  game.phase = 'resolved';
+  game.running = false;
+  log('Set resolved. Press Start to repeat this set, or use Jump to set to load another set.');
+}
+
+function resolveCircle(source, hits) {
+  game.effects.push({ type: 'circle', x: source.x, y: source.y, r: CIRCLE_R });
+  // The spread player also receives their own vulnerability. If a cone/clone/stack
+  // also hits them, that is a double vulnerability and should fail.
+  addHit(hits, source.id, `${source.id} own circle`);
+  for (const p of game.players) {
+    if (p.id !== source.id && hitboxFullyInsideCircle(p, { x: source.x, y: source.y, r: CIRCLE_R })) {
+      addHit(hits, p.id, `${source.id} circle`);
+    }
+  }
+}
+
+function resolveStack(source, hits) {
+  const inside = game.players.filter(p => hitboxFullyInsideCircle(p, { x: source.x, y: source.y, r: STACK_R }));
+  game.effects.push({ type: 'stack', x: source.x, y: source.y, r: STACK_R });
+  if (inside.length !== 3) {
+    fail(`${source.id} stack hit ${inside.length}/3 players.`);
+    return;
+  }
+  for (const p of inside) addHit(hits, p.id, `${source.id} stack`);
+}
+
+function resolveCone(source, hits) {
+  const others = game.players.filter(p => p.id !== source.id);
+  const target = others.sort((a, b) => dist(a, source) - dist(b, source))[0];
+  if (!target) return;
+  const aim = angleTo(source, target);
+  game.effects.push({ type: 'cone', x: source.x, y: source.y, aim });
+  for (const p of others) {
+    if (hitboxFullyInsideCone(p, source, aim)) {
+      addHit(hits, p.id, `${source.id} cone`);
+    }
+  }
+}
+
+function applyHits(hits, label) {
+  for (const [id, sources] of hits.entries()) {
+    const p = game.players.find(x => x.id === id);
+    if (!p) continue;
+    if (sources.length > 1) {
+      fail(`${p.id} was hit by multiple mechanics: ${sources.join(', ')}.`);
+      return;
+    }
+    p.vulnUntil = 2.0;
+  }
+  if (hits.size > 0) log(`${label}: ${[...hits.keys()].join(', ')} received vulnerability.`);
+}
+
+function fail(reason) {
+  game.fail = reason;
+  game.running = false;
+  log(`FAIL: ${reason}`);
+}
+
+function endCheck() {
+  const bad = game.players.filter(p => p.soaks < 4);
+  if (bad.length > 0) fail(`End failed: ${bad.map(p => `${p.id}(${p.soaks})`).join(', ')} soaked fewer than 4 times.`);
+  else {
+    game.ended = true;
+    game.running = false;
+    log('CLEAR: everyone soaked at least 4 times.');
+  }
+}
+
+function nextPair() {
+  if (game.pair >= 8) {
+    endCheck();
+    return false;
+  }
+  loadPairSet(game.pair + 1);
+  return true;
+}
+
+function loadPairSet(pairNumber) {
+  const targetPair = Math.max(1, Math.min(8, Number(pairNumber) || 1));
+
+  if (game.fail || game.ended) {
+    game.fail = null;
+    game.ended = false;
+  }
+  game.phase = 'planning';
+  game.running = false;
+  game.timer = PAIR_TIME;
+  game.effects = [];
+  game.cleaves = [];
+
+  // Clicking the already-loaded set should never reroll or change markers.
+  if (targetPair === game.pair) {
+    spawnTowerPair();
+    log(`Pair ${game.pair} reloaded. Markers unchanged.`);
+    updateUI();
+    return;
+  }
+
+  // If this set already exists in the timeline, restore exactly that marker state.
+  // This prevents repeated Jump clicks from changing players again.
+  if (game.signSnapshots[targetPair]) {
+    game.pair = targetPair;
+    restoreSigns(game.signSnapshots[targetPair]);
+    spawnTowerPair();
+    log(`Loaded pair ${game.pair}. Existing timeline markers restored.`);
+    updateUI();
+    return;
+  }
+
+  // Moving forward creates the timeline one set at a time. At each transition,
+  // only the players currently inside towers get new markers.
+  if (targetPair > game.pair) {
+    while (game.pair < targetPair) {
+      const fromSet = game.pair;
+      if (!game.markerTransitionsDone[fromSet]) {
+        assignNextSetSignsToTowerSoakers(fromSet + 1);
+        game.markerTransitionsDone[fromSet] = true;
+      }
+      game.pair += 1;
+      game.signSnapshots[game.pair] = snapshotSigns();
+      spawnTowerPair();
+    }
+    log(`Loaded pair ${game.pair}. Timeline advanced; only previous tower players changed markers.`);
+    updateUI();
+    return;
+  }
+
+  // Moving backward without an existing snapshot should be rare, but keep markers stable.
+  game.pair = targetPair;
+  game.signSnapshots[game.pair] = snapshotSigns();
+  spawnTowerPair();
+  log(`Loaded pair ${game.pair}. Markers kept stable.`);
+  updateUI();
+}
+
+function startCurrentSet() {
+  // If a mechanic failed, keep the arena exactly as-is so you can move players,
+  // clear the failure, and re-run the same tower set for explanation/practice.
+  if (game.ended) return;
+  if (game.fail) {
+    game.fail = null;
+    game.running = false;
+    game.phase = 'planning';
+    game.timer = PAIR_TIME;
+    game.effects = [];
+    // Keep clone/cleave guides from the timeline.
+    log('Failure cleared. Re-running the same set.');
+  }
+  if (game.phase === 'resolved') {
+    // Repeat the same selected set. Jump to set is now the only control that changes tower set/markers.
+    game.phase = 'planning';
+  }
+  if (game.phase === 'planning') {
+    game.effects = [];
+    // Keep All Things End clone cleaves fixed from the previous timeline set.
+    if (game.currentCast === 'All Things End' && (!game.cleaves || game.cleaves.length === 0)) spawnStaticAllThingsEndCleavesFromTimeline();
+    game.timer = PAIR_TIME;
+    game.running = true;
+  }
+}
+
+function update(dt) {
+  if (!game.ended) {
+    for (const p of game.players) p.vulnUntil = Math.max(0, p.vulnUntil - dt);
+  }
+  if (!game.running || game.fail || game.ended) return;
+  if (game.phase === 'planning') {
+    game.timer -= dt;
+    if (game.timer <= 0) {
+      game.timer = 0;
+      resolveTowers();
+    }
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawArena();
+  drawTowers();
+  drawClonesAndCleaves();
+  drawEffects();
+  drawBoss();
+  drawPlayers();
+}
+
+function drawArena() {
+  ctx.save();
+  ctx.translate(C.x, C.y);
+  const grd = ctx.createRadialGradient(0, 0, 20, 0, 0, ARENA_R);
+  grd.addColorStop(0, '#202b3b');
+  grd.addColorStop(1, '#101722');
+  ctx.fillStyle = grd;
+  ctx.beginPath();
+  ctx.arc(0, 0, ARENA_R, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#526173';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(130,150,180,0.20)';
+  ctx.lineWidth = 1;
+  for (let r = 110; r < ARENA_R; r += 60) {
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+  }
+  for (let i = 0; i < 16; i++) {
+    const a = i * Math.PI * 2 / 16;
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(a)*ARENA_R, Math.sin(a)*ARENA_R); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawBoss() {
+  ctx.save();
+  ctx.fillStyle = 'rgba(239, 68, 68, 0.20)';
+  ctx.strokeStyle = '#ef4444';
+  ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.arc(C.x, C.y, BOSS_R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#0b0f16';
+  ctx.beginPath(); ctx.arc(C.x, C.y, 32, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#ff5b5b'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = '#fca5a5'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
+  ctx.fillText('BOSS', C.x, C.y + 6);
+  ctx.restore();
+}
+
+function drawTowers() {
+  for (const t of game.towers) {
+    const soakers = getTowerSoakers(t).length;
+    ctx.save();
+    ctx.fillStyle = 'rgba(37, 150, 255, 0.18)';
+    ctx.strokeStyle = soakers === 2 ? '#4ade80' : '#38bdf8';
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    const progress = 1 - game.timer / PAIR_TIME;
+    const orbY = t.y - t.r - 38 + progress * (t.r * 2 + 20);
+    ctx.fillStyle = '#7dd3fc';
+    ctx.shadowColor = '#38bdf8'; ctx.shadowBlur = 18;
+    ctx.beginPath(); ctx.arc(t.x, orbY, 13, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = '#dff6ff'; ctx.textAlign = 'center';
+    ctx.font = 'bold 18px Arial'; ctx.fillText(`Tower ${t.id}`, t.x, t.y - 8);
+    ctx.font = 'bold 16px Arial'; ctx.fillText(`${game.timer.toFixed(1)}s`, t.x, t.y + 14);
+    ctx.fillStyle = soakers === 2 ? '#86efac' : '#facc15';
+    ctx.fillText(`(${soakers}/2)`, t.x, t.y + 36);
+    ctx.restore();
+  }
+}
+
+function drawClonesAndCleaves() {
+  if (!game.clones.length) return;
+  for (const clone of game.clones) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(249, 115, 22, 0.16)';
+    ctx.strokeStyle = '#f97316';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(clone.x, clone.y, CLONE_R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fdba74'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('clone', clone.x, clone.y + 4);
+    ctx.restore();
+  }
+  if (game.currentCast === 'All Things End') {
+    for (const c of game.cleaves || []) drawCleave(c.x, c.y, c.aim);
+  }
+}
+
+function drawCleave(x, y, aim) {
+  // All Things End cleave is not a cone: it is the entire square/half-arena
+  // in the direction the boss/clone is facing.
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(aim);
+  ctx.fillStyle = 'rgba(239, 68, 68, 0.18)';
+  ctx.strokeStyle = 'rgba(239, 68, 68, 0.70)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.rect(0, -ARENA_R, ARENA_R * 2, ARENA_R * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawEffects() {
+  for (const e of game.effects) {
+    ctx.save();
+    const alpha = 1;
+    if (e.type === 'circle') {
+      ctx.fillStyle = `rgba(255,255,255,${0.08*alpha})`;
+      ctx.strokeStyle = `rgba(255,255,255,${0.85*alpha})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    }
+    if (e.type === 'stack') {
+      ctx.fillStyle = `rgba(250,204,21,${0.10*alpha})`;
+      ctx.strokeStyle = `rgba(250,204,21,${0.9*alpha})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    }
+    if (e.type === 'cone') {
+      ctx.translate(e.x, e.y); ctx.rotate(e.aim);
+      ctx.fillStyle = `rgba(239,68,68,${0.18*alpha})`;
+      ctx.strokeStyle = `rgba(239,68,68,${0.85*alpha})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(0,0);
+      ctx.lineTo(CONE_LEN, -Math.tan(CONE_HALF_ANGLE)*CONE_LEN);
+      ctx.lineTo(CONE_LEN, Math.tan(CONE_HALF_ANGLE)*CONE_LEN);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    if (e.type === 'clone') {
+      ctx.fillStyle = `rgba(249,115,22,${0.12*alpha})`;
+      ctx.strokeStyle = `rgba(249,115,22,${0.9*alpha})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function drawPlayers() {
+  for (const p of game.players) {
+    ctx.save();
+    if (p.vulnUntil > 0) {
+      ctx.fillStyle = 'rgba(250, 204, 21, 0.22)';
+      ctx.beginPath(); ctx.arc(p.x, p.y, PLAYER_R + 16, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = p.color;
+    ctx.strokeStyle = game.selectedId === p.id ? '#ffffff' : '#111827';
+    ctx.lineWidth = game.selectedId === p.id ? 4 : 2;
+    ctx.beginPath(); ctx.arc(p.x, p.y, PLAYER_R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 15px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(p.id, p.x, p.y + 1);
+    drawSign(p.sign, p.x, p.y - 37, 15);
+    ctx.restore();
+  }
+}
+
+function drawSign(sign, x, y, s) {
+  ctx.save();
+  ctx.strokeStyle = '#ffffff';
+  ctx.fillStyle = '#ffffff';
+  ctx.lineWidth = 3;
+  if (sign === 'circle') {
+    ctx.beginPath(); ctx.arc(x, y, s * 0.65, 0, Math.PI * 2); ctx.stroke();
+  } else if (sign === 'cone') {
+    ctx.beginPath();
+    // inverted triangle
+    ctx.moveTo(x - s * 0.75, y - s * 0.45);
+    ctx.lineTo(x + s * 0.75, y - s * 0.45);
+    ctx.lineTo(x, y + s * 0.75);
+    ctx.closePath(); ctx.stroke();
+  } else if (sign === 'stack') {
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath(); ctx.moveTo(x - s * 0.7, y + i * 7); ctx.lineTo(x + s * 0.7, y + i * 7); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function updateUI() {
+  document.getElementById('pairLabel').textContent = game.pair;
+  document.getElementById('stateLabel').textContent = game.fail ? 'Failed' : game.ended ? 'Clear' : game.running ? 'Running' : game.phase === 'resolved' ? 'Resolved' : 'Planning';
+  document.getElementById('selectedLabel').textContent = game.selectedId || 'None';
+  document.getElementById('castLabel').textContent = game.currentCast;
+  document.getElementById('prevEndLabel').textContent = game.previousEnd || 'None';
+  document.getElementById('timerLabel').textContent = game.phase === 'resolved' ? 'Press Start' : `${game.timer.toFixed(1)}s`;
+  const failBox = document.getElementById('failBox');
+  if (game.fail) { failBox.className = 'small warn'; failBox.textContent = game.fail; }
+  else if (game.ended) { failBox.className = 'small ok'; failBox.textContent = 'Clear! Everyone soaked at least 4 times.'; }
+  else { failBox.className = 'small ok'; failBox.textContent = 'No failures yet.'; }
+
+  const tbody = document.getElementById('playerTable');
+  tbody.innerHTML = '';
+  for (const p of game.players) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><span class="roleDot" style="background:${p.color}"></span>${p.id} <span class="small">(${p.job})</span></td><td>${signText(p.firstSign || p.sign)}</td><td class="${p.soaks >= 4 ? 'ok' : 'yellow'}">${p.soaks}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function signText(sign) {
+  if (sign === 'circle') return '○';
+  if (sign === 'cone') return '▽';
+  if (sign === 'stack') return '☰';
+  return '?';
+}
+
+function loop(ts) {
+  const dt = Math.min(0.05, (ts - lastTs) / 1000);
+  lastTs = ts;
+  update(dt);
+  draw();
+  updateUI();
+  requestAnimationFrame(loop);
+}
+
+function canvasPos(evt) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (evt.clientX - rect.left) * canvas.width / rect.width,
+    y: (evt.clientY - rect.top) * canvas.height / rect.height,
+  };
+}
+
+canvas.addEventListener('click', (evt) => {
+  const pnt = canvasPos(evt);
+  const clicked = game.players.slice().reverse().find(p => dist(p, pnt) <= PLAYER_R + 8);
+  if (clicked) game.selectedId = clicked.id;
+});
+
+canvas.addEventListener('contextmenu', (evt) => {
+  evt.preventDefault();
+  if (!game.selectedId) return;
+  const pnt = canvasPos(evt);
+  const p = game.players.find(x => x.id === game.selectedId);
+  if (!p) return;
+  p.x = pnt.x; p.y = pnt.y;
+  clampToArena(p);
+});
+
+document.getElementById('startBtn').addEventListener('click', startCurrentSet);
+document.getElementById('resetBtn').addEventListener('click', resetGame);
+document.getElementById('loadPairBtn').addEventListener('click', () => loadPairSet(document.getElementById('pairSelect').value));
+
+document.getElementById('hitboxSlider').addEventListener('input', (evt) => {
+  PLAYER_HIT_R = Number(evt.target.value);
+  document.getElementById('hitboxValue').textContent = String(PLAYER_HIT_R);
+});
+
+document.addEventListener('keydown', (evt) => {
+  if (evt.code === 'Space') { evt.preventDefault(); startCurrentSet(); }
+  if (evt.key.toLowerCase() === 'r') resetGame();
+});
+
+resetGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
