@@ -334,13 +334,13 @@ function resetGame() {
   // T pair = top-left, H pair = bottom-left, D1/D2 = top-right, D3/D4 = bottom-right.
   const startPositions = {
     // Closer to boss/center, kept in clear quadrant pairs.
-    T1: pointFromAngle(215, -140 * Math.PI / 180),
-    T2: pointFromAngle(215, -122 * Math.PI / 180),
-    H1: pointFromAngle(215, 140 * Math.PI / 180),
-    H2: pointFromAngle(215, 122 * Math.PI / 180),
+    H1: pointFromAngle(215, -140 * Math.PI / 180),
+    T1: pointFromAngle(215, -122 * Math.PI / 180),
+    H2: pointFromAngle(215, 140 * Math.PI / 180),
+    T2: pointFromAngle(215, 122 * Math.PI / 180),
     D1: pointFromAngle(215, -58 * Math.PI / 180),
-    D2: pointFromAngle(215, -40 * Math.PI / 180),
-    D3: pointFromAngle(215, 58 * Math.PI / 180),
+    D3: pointFromAngle(215, -40 * Math.PI / 180),
+    D2: pointFromAngle(215, 58 * Math.PI / 180),
     D4: pointFromAngle(215, 40 * Math.PI / 180),
   };
   const players = playersTemplate.map((p) => {
